@@ -26,6 +26,8 @@ type AppView = 'main' | 'clients' | 'control_panel' | 'settings' | 'performance'
 
 const CACHE_KEY_PREFIX = 'metaAdCreativeAnalysis_';
 const CURRENT_CLIENT_KEY = 'current_client_id'; // This can remain in localStorage as it's ephemeral session state
+// Temporary flag to bypass the login screen
+const DISABLE_LOGIN = true;
 
 const fileToGenerativePart = async (file: File) => {
     const base64EncodedDataPromise = new Promise<string>((resolve, reject) => {
@@ -443,23 +445,30 @@ const App: React.FC = () => {
                         dbTyped.getLoggedInUser()
                     ]);
 
+                    let defaultAdmin: User | undefined;
                     if (loadedUsers.length === 0) {
                         Logger.warn('No users found in DB. Creating default Admin user.');
-                        const defaultAdmin: User = { id: crypto.randomUUID(), username: 'Admin', password: 'Admin', role: 'admin' };
+                        defaultAdmin = { id: crypto.randomUUID(), username: 'Admin', password: 'Admin', role: 'admin' };
                         setUsers([defaultAdmin]);
                         await dbTyped.saveUsers([defaultAdmin]);
                     } else {
                         setUsers(loadedUsers);
                     }
-                    
+
                     setClients(loadedClients);
                     setAnalysisHistory(loadedHistory);
                     Logger.success(`Loaded ${loadedUsers.length} users, ${loadedClients.length} clients, and ${loadedHistory.length} history entries.`);
 
-                    if (loggedInUser && (loadedUsers.length > 0 ? loadedUsers : [ { id: crypto.randomUUID(), username: 'Admin', password: 'Admin', role: 'admin' } ]).some(u => u.id === loggedInUser.id)) {
+                    const availableUsers = loadedUsers.length > 0 ? loadedUsers : (defaultAdmin ? [defaultAdmin] : []);
+                    if (loggedInUser && availableUsers.some(u => u.id === loggedInUser.id)) {
                         Logger.info(`Found logged in user: ${loggedInUser.username}`);
                         setCurrentUser(loggedInUser);
                         setIsLoggedIn(true);
+                    } else if (DISABLE_LOGIN && availableUsers.length > 0) {
+                        Logger.info(`Auto login enabled. Using user: ${availableUsers[0].username}`);
+                        setCurrentUser(availableUsers[0]);
+                        setIsLoggedIn(true);
+                        dbTyped.saveLoggedInUser(availableUsers[0]);
                     }
                 } catch (error) {
                     const message = error instanceof Error ? error.message : 'Unknown DB error';
@@ -932,7 +941,7 @@ const App: React.FC = () => {
         )
     }
 
-    if (!isLoggedIn) {
+    if (!isLoggedIn && !DISABLE_LOGIN) {
         return <LoginView onLogin={handleLogin} />;
     }
     
