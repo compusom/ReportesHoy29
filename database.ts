@@ -1,17 +1,13 @@
-
 import { Client, AnalysisHistoryEntry, User, PerformanceRecord } from './types';
 
-// A simulated database client for a more realistic feel.
-// In a real-world scenario, this would be a backend API client.
-// This simulation uses localStorage as its data store.
-
 const ARTIFICIAL_DELAY_MS = 400;
+
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
 type DbConnectionStatus = {
     connected: boolean;
 };
 
-// This state is controlled by the App component
 export const dbConnectionStatus: DbConnectionStatus = {
     connected: false,
 };
@@ -24,105 +20,69 @@ const checkConnection = () => {
     }
 };
 
-const simulateQuery = <T>(action: () => T): Promise<T> => {
+const simulateQuery = <T>(action: () => Promise<T>): Promise<T> => {
     return new Promise((resolve, reject) => {
         setTimeout(() => {
-            try {
-                // Connection is checked inside the action to allow config to be read before connection.
-                const result = action();
-                resolve(result);
-            } catch (error) {
-                reject(error);
-            }
+            action().then(resolve).catch(reject);
         }, ARTIFICIAL_DELAY_MS);
     });
 };
 
+async function post<T>(url: string, body: any): Promise<T> {
+    const res = await fetch(`${API_BASE_URL}${url}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+        throw new Error(`API error: ${res.statusText}`);
+    }
+    return res.json();
+}
+
 const db = {
     async select<T>(table: string, defaultValue: T): Promise<T> {
-        // Allow reading config before connection is established
         if (table !== 'config') {
             checkConnection();
         }
         console.log(`[DB] Executing: SELECT * FROM ${table};`);
-        return simulateQuery(() => {
-            try {
-                const data = localStorage.getItem(`db_${table}`);
-                return data ? JSON.parse(data) : defaultValue;
-            } catch (e) {
-                console.error(`[DB] Error parsing table ${table}:`, e);
-                return defaultValue;
-            }
-        });
+        return simulateQuery(() =>
+            post<T | null>('/select', { table }).catch(() => defaultValue).then(data => data ?? defaultValue)
+        );
     },
 
     async update(table: string, data: any): Promise<void> {
-        // Allow writing config before connection is established
         if (table !== 'config') {
             checkConnection();
         }
         console.log(`[DB] Executing: UPDATE ${table} with new data...`);
-        return simulateQuery(() => {
-             try {
-                localStorage.setItem(`db_${table}`, JSON.stringify(data));
-            } catch (e) {
-                console.error(`[DB] Error writing to table ${table}:`, e);
-                if (e instanceof DOMException && (e.name === 'QuotaExceededError' || e.code === 22)) {
-                    alert(`Error: El almacenamiento está lleno. No se pudieron guardar los datos en la tabla "${table}". Libere espacio desde el Panel de Control.`);
-                }
-            }
-        });
+        return simulateQuery(() => post('/update', { table, data }).then(() => {}));
     },
 
     async clearTable(table: string): Promise<void> {
         checkConnection();
         console.log(`[DB] Executing: DELETE FROM ${table};`);
-        return simulateQuery(() => {
-            localStorage.removeItem(`db_${table}`);
-        });
+        return simulateQuery(() => post('/clearTable', { table }).then(() => {}));
     },
 
     async clearAllData(): Promise<void> {
         checkConnection();
         console.log(`[DB] Executing: CLEAR ALL USER DATA;`);
-        return simulateQuery(() => {
-            const keysToClear = [
-                'db_clients',
-                'db_analysis_history',
-                'db_users',
-                'db_performance_data',
-                'db_processed_reports_hashes',
-                'current_client_id',
-                'logged_in_user_data'
-            ];
-            
-            keysToClear.forEach(key => localStorage.removeItem(key));
-            
-            // Clear all analysis cache keys
-            Object.keys(localStorage).forEach(key => {
-                 if (key.startsWith('metaAdCreativeAnalysis_')) {
-                    localStorage.removeItem(key);
-                 }
-            });
-        });
+        return simulateQuery(() => post('/clearAllData', {}).then(() => {}));
     },
-    
+
     async factoryReset(): Promise<void> {
-        // No connection check needed for a full reset
         console.log(`[DB] Executing: FACTORY RESET;`);
-        return simulateQuery(() => {
-            localStorage.clear();
-        });
+        return simulateQuery(() => post('/factoryReset', {}).then(() => {}));
     }
 };
 
 export default db;
 
-// Type-safe wrappers for convenience
 export const dbTyped = {
     getUsers: () => db.select<User[]>('users', []),
     saveUsers: (users: User[]) => db.update('users', users),
-    
+
     getClients: () => db.select<Client[]>('clients', []),
     saveClients: (clients: Client[]) => db.update('clients', clients),
 
